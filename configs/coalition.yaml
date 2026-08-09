@@ -1,0 +1,16 @@
+# coalition.yaml
+#
+# Coalition formation hyperparameters, per the KG/Coalition
+# Implementation Strategy doc's hyperparameter table. tau_form and
+# tau_break are shared with knowledge_graph/directed_graph.py (the
+# SAME thresholds gate both edge trust and coalition candidacy -- not
+# duplicated values that could drift apart).
+
+tau_form: 0.50       # KS-bar threshold to open an edge / become a merge candidate
+tau_break: 0.30       # KS-bar threshold to prune an edge / trigger a health-check failure
+patience: 2           # P -- consecutive above-tau_form rounds required before merge is considered
+dwell_episodes: 2     # D -- episodes a coalition is protected from being broken after forming (2-3 range; 2 used)
+max_coalition_size: 3 # hard cap on coalition size (2-3 range; 3 used, since leave_one_out.py exists
+                       # specifically to handle a size-3 coalition's health failures without a full dissolve)
+health_check_interval: 5  # K -- episodes between periodic health checks once dwell has expired (5-10 range; 5 used)
+reputation_log_capacity: 200  # PLACEHOLDER, not specified in any project doc -- see coalition/reputation.py

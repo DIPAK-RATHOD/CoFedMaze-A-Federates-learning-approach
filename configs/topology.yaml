@@ -1,0 +1,24 @@
+# configs/topology.yaml
+#
+# Physical adjacency & TCP network server address mapping for nodes.
+# Dynamic configuration for Ubuntu servers:
+#   Node 1 (N1): 10.13.0.157 (Port 5001)
+#   Node 2 (N2): 10.13.0.158 (Port 5002)
+#   Node 3 (N3): 10.13.0.159 (Port 5003)
+
+topology_type: ring
+
+nodes:
+  - N1
+  - N2
+  - N3
+
+addresses:
+  N1: { host: "10.13.0.157", port: 5001 }
+  N2: { host: "10.13.0.158", port: 5002 }
+  N3: { host: "10.13.0.159", port: 5003 }
+
+links:
+  - [N1, N2]
+  - [N2, N3]
+  - [N3, N1]

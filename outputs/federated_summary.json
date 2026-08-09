@@ -1,0 +1,50 @@
+{
+  "rounds": 2,
+  "master_seed": 0,
+  "nodes": {
+    "N1": {
+      "checkpoint": "state\\node1\\checkpoints\\current.pt",
+      "episode_count": 2,
+      "coalition_members": [
+        "N1",
+        "N2"
+      ]
+    },
+    "N2": {
+      "checkpoint": "state\\node2\\checkpoints\\current.pt",
+      "episode_count": 2,
+      "coalition_members": [
+        "N1",
+        "N2",
+        "N3"
+      ]
+    },
+    "N3": {
+      "checkpoint": "state\\node3\\checkpoints\\current.pt",
+      "episode_count": 2,
+      "coalition_members": [
+        "N2",
+        "N3",
+        "N4"
+      ]
+    },
+    "N4": {
+      "checkpoint": "state\\node4\\checkpoints\\current.pt",
+      "episode_count": 2,
+      "coalition_members": [
+        "N3",
+        "N4",
+        "N5"
+      ]
+    },
+    "N5": {
+      "checkpoint": "state\\node5\\checkpoints\\current.pt",
+      "episode_count": 2,
+      "coalition_members": [
+        "N1",
+        "N4",
+        "N5"
+      ]
+    }
+  }
+}

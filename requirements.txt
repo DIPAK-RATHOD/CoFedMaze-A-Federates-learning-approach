@@ -1,0 +1,22 @@
+# CoFedMaze Dependencies
+
+# Core Deep Learning & Reinforcement Learning
+torch>=2.0.0
+numpy>=1.24.0
+pettingzoo>=1.24.0
+gymnasium>=0.29.0
+
+# Graph Processing
+networkx>=3.0
+
+# Visualization & Rendering
+matplotlib>=3.7.0
+
+# Configuration
+PyYAML>=6.0
+
+# System Monitoring & Resource Auditing
+psutil>=5.9.0
+
+# Testing & Quality Assurance
+pytest>=8.0.0

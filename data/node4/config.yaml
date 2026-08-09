@@ -1,0 +1,34 @@
+# data/node4/config.yaml
+# N4 runs the "partial-observability" task variant. This variant
+# doesn't need special env-level code -- the egocentric window
+# observation (env/core/observations.py) already gives every node
+# partial observability by construction.
+#
+# IMPORTANT CONSTRAINT DISCOVERED DURING scripts/run_simulation.py'S
+# INTEGRATION TEST: window_size determines the shared encoder's
+# architecture (its flattened FC layer size scales with window_size^2).
+# ALL PHYSICALLY-CONNECTED NODES MUST USE THE SAME window_size, or
+# weight exchange between them crashes with a state_dict shape
+# mismatch the moment one tries to load the other's encoder. An
+# earlier version of this file used window_size=3 (smaller, to
+# emphasize partial observability) -- this broke N4's exchange with
+# its ring neighbors (N3, N5) immediately. Fixed to window_size=5,
+# matching every other node. If a genuinely smaller/different
+# observation window is wanted for this variant later, it needs a
+# real design solution (e.g. every node using the same window_size
+# architecturally, with "more partial" achieved through some other
+# mechanism -- masking, dropout -- not a differently-shaped window),
+# not just a differing config value.
+node_id: N4
+task_variant: partial_observability
+
+maze:
+  rows: 7
+  cols: 7
+  algorithm: recursive_backtracking
+  window_size: 5
+
+task_params:
+  num_checkpoints: 0
+  num_obstacles: 0
+  num_key_door_pairs: 0

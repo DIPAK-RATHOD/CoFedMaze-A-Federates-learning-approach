@@ -1,0 +1,15 @@
+# data/node2/config.yaml
+# N2 runs the "key-and-door" task variant.
+node_id: N2
+task_variant: key_and_door
+
+maze:
+  rows: 7
+  cols: 7
+  algorithm: kruskal
+  window_size: 5
+
+task_params:
+  num_checkpoints: 0
+  num_obstacles: 0
+  num_key_door_pairs: 1

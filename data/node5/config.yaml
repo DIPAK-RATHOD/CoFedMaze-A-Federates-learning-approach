@@ -1,0 +1,21 @@
+# data/node5/config.yaml
+# N5 runs the "limited-communication" task variant. HONEST LIMITATION:
+# this is a FEDERATION-layer concern (restricting what gets exchanged
+# with peers), not something env/ enforces -- no federation/ file
+# currently implements bandwidth/message-rate limiting. N5's maze
+# config is otherwise a plain baseline; the actual "limited
+# communication" behavior is not yet implemented anywhere in this
+# codebase.
+node_id: N5
+task_variant: limited_communication
+
+maze:
+  rows: 7
+  cols: 7
+  algorithm: recursive_backtracking
+  window_size: 5
+
+task_params:
+  num_checkpoints: 0
+  num_obstacles: 0
+  num_key_door_pairs: 0

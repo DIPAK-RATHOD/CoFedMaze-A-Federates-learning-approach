@@ -1,0 +1,22 @@
+# data/node1/config.yaml
+#
+# N1's task variant identity and maze generation parameters. Per the
+# glossary's N1-N5 assignment, N1 runs the "checkpoints" variant.
+# Nodes N2-N5 follow the same shape with their own variant
+# (key-and-door, moving-obstacles, partial-observability,
+# limited-communication) -- only N1's is created here as the worked
+# example; the other four are not yet built.
+
+node_id: N1
+task_variant: checkpoints
+
+maze:
+  rows: 7
+  cols: 7
+  algorithm: recursive_backtracking
+  window_size: 5
+
+task_params:
+  num_checkpoints: 2
+  num_obstacles: 0
+  num_key_door_pairs: 0

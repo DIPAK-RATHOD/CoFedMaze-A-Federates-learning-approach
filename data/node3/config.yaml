@@ -1,0 +1,19 @@
+# data/node3/config.yaml
+# N3 runs the "moving-obstacles" task variant. HONEST LIMITATION: only
+# STATIC obstacles are implemented (env/objects/obstacle.py's own
+# docstring already flags "moving" as a future subclass, not built).
+# This config uses static obstacles as the closest available
+# approximation -- N3 is not yet a true moving-obstacle environment.
+node_id: N3
+task_variant: moving_obstacles
+
+maze:
+  rows: 7
+  cols: 7
+  algorithm: prim
+  window_size: 5
+
+task_params:
+  num_checkpoints: 0
+  num_obstacles: 2
+  num_key_door_pairs: 0

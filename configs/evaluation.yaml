@@ -1,0 +1,14 @@
+# Evaluation policy shared by command-line reports and federation checks.
+# Per-node validation/test seed lists live in data/nodeN/seeds/.  This config
+# controls the evaluation policy rather than duplicating those manifests.
+
+metrics:
+  - success_rate
+  - average_episode_return
+  - average_episode_length
+  - average_collision_count
+  - timeout_rate
+
+routine_validation_subset_size: 5
+max_episode_steps: 100
+full_validation_confirmation_interval: 25

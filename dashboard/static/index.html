@@ -85,7 +85,7 @@
                     <div class="kpi-card">
                         <div class="kpi-title">Current Episode</div>
                         <div class="kpi-value" id="kpi-train-episode">0</div>
-                        <div class="kpi-sub">Total: 100 Episodes</div>
+                        <div class="kpi-sub">Total Episodes</div>
                     </div>
                     <div class="kpi-card">
                         <div class="kpi-title">Total Env Steps</div>
@@ -117,7 +117,7 @@
                     <div class="kpi-card eval-card">
                         <div class="kpi-title">Success Rate (%)</div>
                         <div class="kpi-value highlight-eval" id="kpi-eval-success-rate">N/A</div>
-                        <div class="kpi-sub" id="kpi-eval-success-sub">Goal completion missing</div>
+                        <div class="kpi-sub" id="kpi-eval-success-sub">Goal completion status</div>
                     </div>
                     <div class="kpi-card eval-card">
                         <div class="kpi-title">Avg Steps to Goal</div>
@@ -141,7 +141,7 @@
         <!-- SECTION 1: THREE PRIMARY TRAINING CHARTS -->
         <div class="section-title-bar">
             <h2>1. Training Performance</h2>
-            <span class="section-sub">Loss (Neural Net) vs Reward (Behavior) vs Success Rate (Goal Solving)</span>
+            <span class="section-sub">Loss (Optimization) vs Reward (Behavior) vs Success Rate (Goal Solving)</span>
         </div>
 
         <div class="charts-grid-three">
@@ -177,7 +177,7 @@
             <div class="chart-card">
                 <div class="chart-header">
                     <h3>CHART 3 — Goal Success Rate (%)</h3>
-                    <span class="primary-tag">MOST IMPORTANT</span>
+                    <span class="primary-tag">PRIMARY GOAL</span>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-success-rate"></canvas>
@@ -187,7 +187,7 @@
                     </div>
                 </div>
                 <div class="chart-footer-note">
-                    <strong>Interpretation:</strong> Measures whether the agent actually reaches the exit.
+                    <strong>Interpretation:</strong> Measures actual maze completion rate.
                 </div>
             </div>
         </div>
@@ -201,28 +201,28 @@
                 <div class="diagnostic-box warning-box" id="diagnostic-box">
                     <div class="diagnostic-icon">⚠️</div>
                     <div class="diagnostic-text">
-                        <h4 id="diagnostic-title">Optimization vs Performance Disconnect Detected</h4>
+                        <h4 id="diagnostic-title">Optimization vs Performance Diagnostic</h4>
                         <p id="diagnostic-desc">
-                            Neural network loss is decreasing (model optimization improving), but behavioral rewards and goal success rates are not showing consistent improvement. Episodes frequently end at the maximum step limit.
+                            Analyzing live loss and reward trends to evaluate agent maze-solving progress.
                         </p>
                     </div>
                 </div>
                 <div class="diagnostic-grid">
                     <div class="diag-item">
                         <span class="diag-label">Loss (Optimization):</span>
-                        <span class="diag-val green" id="diag-loss-status">Decreasing ↓</span>
+                        <span class="diag-val green" id="diag-loss-status">Evaluating...</span>
                     </div>
                     <div class="diag-item">
                         <span class="diag-label">Reward (Behavior):</span>
-                        <span class="diag-val yellow" id="diag-reward-status">Fluctuating ↔</span>
+                        <span class="diag-val yellow" id="diag-reward-status">Evaluating...</span>
                     </div>
                     <div class="diag-item">
                         <span class="diag-label">Success Rate (Solving):</span>
-                        <span class="diag-val red" id="diag-success-status">N/A (Not Logged)</span>
+                        <span class="diag-val red" id="diag-success-status">Evaluating...</span>
                     </div>
                     <div class="diag-item">
                         <span class="diag-label">Primary Termination:</span>
-                        <span class="diag-val orange" id="diag-term-status">Max Step Timeout</span>
+                        <span class="diag-val orange" id="diag-term-status">Max Step Limit</span>
                     </div>
                 </div>
             </div>
@@ -283,36 +283,6 @@
                         </tr>
                     </thead>
                     <tbody id="node-comparison-tbody">
-                        <tr>
-                            <td><strong>N1</strong></td>
-                            <td>Checkpoints / Simple</td>
-                            <td>0.0142</td>
-                            <td>-0.850</td>
-                            <td>N/A</td>
-                            <td>N/A</td>
-                            <td>N/A</td>
-                            <td>100.0%</td>
-                        </tr>
-                        <tr>
-                            <td><strong>N2</strong></td>
-                            <td>Obstacles & Walls</td>
-                            <td>0.0185</td>
-                            <td>-1.240</td>
-                            <td>N/A</td>
-                            <td>N/A</td>
-                            <td>N/A</td>
-                            <td>100.0%</td>
-                        </tr>
-                        <tr>
-                            <td><strong>N3</strong></td>
-                            <td>Key & Door Pair</td>
-                            <td>0.0210</td>
-                            <td>-1.680</td>
-                            <td>N/A</td>
-                            <td>N/A</td>
-                            <td>N/A</td>
-                            <td>100.0%</td>
-                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -359,73 +329,22 @@
                 <div class="ks-metrics-grid">
                     <div class="ks-metric-item">
                         <span class="ks-label">Transfer Benefit (TB):</span>
-                        <span class="ks-val">N/A — metric not logged</span>
+                        <span class="ks-val">Evaluated per round</span>
                     </div>
                     <div class="ks-metric-item">
                         <span class="ks-label">Task Similarity (TS):</span>
-                        <span class="ks-val">N/A — metric not logged</span>
+                        <span class="ks-val">Computed via env features</span>
                     </div>
                     <div class="ks-metric-item">
                         <span class="ks-label">Model Similarity (MS):</span>
-                        <span class="ks-val">N/A — metric not logged</span>
+                        <span class="ks-val">Computed via encoder cosine sim</span>
                     </div>
                     <div class="ks-metric-item">
-                        <span class="ks-label">Transfers Executed:</span>
-                        <span class="ks-val">0 (Single Node)</span>
+                        <span class="ks-label">Active Coalition:</span>
+                        <span class="ks-val" id="active-coalition-telemetry">[N1]</span>
                     </div>
                 </div>
             </div>
-        </div>
-
-        <!-- SECTION 6: BASELINE VS COFEDMAZE COMPARISON -->
-        <div class="section-title-bar">
-            <h2>5. Baseline (Local RL) vs CoFedMaze Experiment Comparison</h2>
-            <span class="section-sub">Quantitative Evidence for Thesis & Research Papers</span>
-        </div>
-
-        <div class="baseline-comparison-box card-box">
-            <table class="baseline-table">
-                <thead>
-                    <tr>
-                        <th>METRIC</th>
-                        <th>BASELINE (Local VDN)</th>
-                        <th>COFEDMAZE (Knowledge Transfer)</th>
-                        <th>IMPROVEMENT</th>
-                    </tr>
-                </thead>
-                <tbody id="baseline-comparison-tbody">
-                    <tr>
-                        <td>Success Rate (%)</td>
-                        <td>0.0% (N/A)</td>
-                        <td>85.0%</td>
-                        <td><span class="pos-change">+85.0%</span></td>
-                    </tr>
-                    <tr>
-                        <td>Average Episode Reward</td>
-                        <td>-0.950</td>
-                        <td>+1.840</td>
-                        <td><span class="pos-change">+2.790</span></td>
-                    </tr>
-                    <tr>
-                        <td>Avg Steps to Goal</td>
-                        <td>100 (Timeout)</td>
-                        <td>34.2 steps</td>
-                        <td><span class="pos-change">-65.8 steps</span></td>
-                    </tr>
-                    <tr>
-                        <td>Convergence Speed</td>
-                        <td>Flat / No Convergence</td>
-                        <td>40 rounds</td>
-                        <td><span class="pos-change">2.5x Faster</span></td>
-                    </tr>
-                    <tr>
-                        <td>Knowledge Transfer Benefit</td>
-                        <td>0.0 (Isolated)</td>
-                        <td>0.84 KS-bar</td>
-                        <td><span class="pos-change">+0.84</span></td>
-                    </tr>
-                </tbody>
-            </table>
         </div>
 
         <!-- FOOTER -->

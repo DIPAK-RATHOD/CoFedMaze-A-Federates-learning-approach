@@ -31,7 +31,10 @@ def render_ascii_maze(env) -> str:
     """
     Renders an ASCII grid representation of the CoFedMaze environment.
     """
-    maze = env.maze
+    maze = getattr(env, "maze", None)
+    if maze is None:
+        return "[Maze not initialized]"
+
     walls_array = maze.to_numpy()
     rows, cols = walls_array.shape
     grid = [["." for _ in range(cols)] for _ in range(rows)]
@@ -44,14 +47,14 @@ def render_ascii_maze(env) -> str:
 
     # Draw Agent A and Agent B
     if hasattr(env, "_agent_objs"):
-        if "agent_0" in env._agent_objs:
-            pos_a = env._agent_objs["agent_0"].pos
-            if 0 <= pos_a[0] < rows and 0 <= pos_a[1] < cols:
-                grid[pos_a[0]][pos_a[1]] = f"{CYAN}{BOLD}A{RESET}"
-        if "agent_1" in env._agent_objs:
-            pos_b = env._agent_objs["agent_1"].pos
-            if 0 <= pos_b[0] < rows and 0 <= pos_b[1] < cols:
-                grid[pos_b[0]][pos_b[1]] = f"{MAGENTA}{BOLD}B{RESET}"
+        for aid, color, symbol in [("agent_0", CYAN, "A"), ("agent_1", MAGENTA, "B")]:
+            if aid in env._agent_objs:
+                obj = env._agent_objs[aid]
+                pos = getattr(obj, "position", getattr(obj, "pos", None))
+                if pos is not None and len(pos) == 2:
+                    r, c = pos
+                    if 0 <= r < rows and 0 <= c < cols:
+                        grid[r][c] = f"{color}{BOLD}{symbol}{RESET}"
 
     lines = [" ".join(row) for row in grid]
     return "\n".join(lines)
@@ -66,7 +69,31 @@ class LiveTerminalView:
         self.node_id = node_id
         self.mode = mode
         self.enabled = enabled
-        self._last_round = 0
+
+    def render_step(self, env, episode_count: int = 0, total_env_steps: int = 0) -> None:
+        """
+        Render a live step frame during episode rollout.
+        """
+        if not self.enabled:
+            return
+
+        ascii_grid = render_ascii_maze(env)
+        clear_str = "\033[H\033[J" if os.name != "nt" else ""
+        header = (
+            f"{clear_str}"
+            f"================================================================================\n"
+            f"{BOLD}{CYAN} COFEDMAZE LIVE STEP VIEW {RESET}| Node: {BOLD}{self.node_id}{RESET} | Mode: {self.mode.upper()}\n"
+            f"================================================================================\n"
+            f" Episode: {episode_count} | Total Env Steps: {total_env_steps}\n"
+            f"--------------------------------------------------------------------------------\n"
+            f" LIVE MAZE VIEW:\n"
+            f"{ascii_grid}\n"
+            f"--------------------------------------------------------------------------------\n"
+            f" Legend: {CYAN}A{RESET}=Agent 0 | {MAGENTA}B{RESET}=Agent 1 | {GRAY}█{RESET}=Wall | {GREEN}.{RESET}=Path\n"
+            f"================================================================================\n"
+        )
+        sys.stdout.write(header)
+        sys.stdout.flush()
 
     def update(self, trainer: "LocalTrainer", current_round: int = 1, total_rounds: int = 10, coalition_members: Optional[list] = None) -> None:
         """
@@ -110,5 +137,6 @@ if __name__ == "__main__":
 
     env = CoFedMazeParallelEnv(rows=7, cols=7, algorithm="recursive_backtracking")
     env.reset(seed=42)
-    print("ASCII Rendering Test:\n" + render_ascii_maze(env))
+    view = LiveTerminalView(node_id="N1", mode="tcp", enabled=True)
+    view.render_step(env, episode_count=1, total_env_steps=5)
     print("live_view.py self-test OK")

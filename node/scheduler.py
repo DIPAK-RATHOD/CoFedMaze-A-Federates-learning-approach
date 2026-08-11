@@ -1,11 +1,10 @@
 """
 scheduler.py
 
-Implements the event schedule for ONE node: each round runs a local
-training episode (marl/training/trainer.py, already built/tested),
-then the federation fast-loop steps -- quantized exchange with
-physical neighbors, a small-subset transfer-benefit test, the KS-bar
-update, and a coalition candidate/health check.
+Entry point for running a single node's training schedule across N rounds.
+Orchestrates local VDN training, P2P state exchange via Transport/Protocol,
+and coalition formation via CoalitionManager. Includes CLI argparse support,
+live ASCII terminal rendering, and live Matplotlib graphical GUI rendering.
 """
 
 import argparse
@@ -14,34 +13,34 @@ import time
 from typing import Callable, List, Optional
 import yaml
 
-from env.core.constants import AGENT_A
 from federation.communication.transport import InProcessTransport, TCPTransport, Transport
 from federation.topology.physical_graph import PhysicalGraph
-from federation.validation.transfer_validation import compute_transfer_benefit, extract_shared_state
+from federation.validation.transfer_validation import extract_shared_state
+from knowledge_graph.model_similarity import compute_model_similarity
 from node.node_config import NodeConfig
 from node.services import NodeServices, build_services
-from visualization.auto_evaluator import generate_node_evaluation_report
 from visualization.live_view import LiveTerminalView
-
-DEFAULT_VALIDATION_SEEDS: List[int] = [101, 102, 103]
+from visualization.matplotlib_live_view import MatplotlibLiveView
 
 
 class NodeScheduler:
-    """Drives one node's per-round event schedule."""
+    """
+    Orchestrates one node's round-by-round execution flow:
+      1. Run one local training episode (run_episode) + 1 gradient step (train_step).
+      2. Save model checkpoint per round.
+      3. Fast loop: send this node's shared state to physical neighbors.
+      4. Fast loop: receive incoming states from physical neighbors.
+      5. Coalition evaluation: update model similarities, evaluate coalitions.
+    """
 
-    def __init__(
-        self,
-        services: NodeServices,
-        transport: Transport,
-        validation_seeds: Optional[List[int]] = None,
-    ) -> None:
+    def __init__(self, services: NodeServices, transport: Transport) -> None:
         self.services = services
         self.transport = transport
-        self.validation_seeds = validation_seeds if validation_seeds is not None else DEFAULT_VALIDATION_SEEDS
         self.round = 0
         self._known_states = {}
+        self.active_coalition: List[str] = [services.config.node_id]
 
-    def run_round(self, on_step: Optional[Callable] = None) -> None:
+    def run_round(self, on_step: Optional[Callable[["LocalTrainer"], None]] = None) -> List[str]:
         """One full round: local training, then the federation fast-loop steps."""
         self.round += 1
 
@@ -69,30 +68,18 @@ class NodeScheduler:
         for data in incoming:
             received = self.services.protocol.receive_incoming(data)
             self._known_states[received.node_id] = received.shared_state
+            if "encoder" in my_state and "encoder" in received.shared_state:
+                ms = compute_model_similarity(my_state["encoder"], received.shared_state["encoder"])
+                self.services.knowledge_updater.graph.update_edge(received.node_id, ms)
 
-            tb_result = compute_transfer_benefit(
-                self.services.trainer.online_model, received.shared_state,
-                self.services.env, self.validation_seeds,
-            )
+        # --- Coalition evaluation ---
+        self.active_coalition = self.services.coalition_manager.evaluate_and_update(
+            current_round=self.round,
+            known_states=self._known_states,
+            my_trajectory=trajectory,
+        )
 
-            ks_bar = self.services.knowledge_updater.update(
-                neighbor_id=received.node_id,
-                tb_result=tb_result,
-                own_encoder_state=my_state["encoder"],
-                neighbor_task_features=self.services.knowledge_updater.own_task_features,
-                neighbor_encoder_state=received.shared_state["encoder"],
-                neighbor_message_size_bytes=len(data),
-            )
-
-            member_weights = {m: 1.0 for m in self._known_states}
-            member_weights[received.node_id] = ks_bar
-            self.services.coalition_manager.step(
-                coalition_model=self.services.trainer.online_model,
-                member_shared_states=self._known_states,
-                member_weights=member_weights,
-                env=self.services.env,
-                validation_seeds=self.validation_seeds,
-            )
+        return self.active_coalition
 
 
 def main():
@@ -103,10 +90,12 @@ def main():
     parser.add_argument("--rounds", type=int, default=10, help="Number of training rounds.")
     parser.add_argument("--round-delay", type=float, default=2.0, help="Inter-round synchronization delay in seconds (default: 2.0s).")
     parser.add_argument("--mode", choices=["tcp", "sim"], default="tcp", help="Transport mode: tcp for distributed or sim for in-process.")
-    parser.add_argument("--render", action="store_true", help="Enable live terminal rendering of maze and agent steps.")
+    parser.add_argument("--render", action="store_true", help="Enable live ASCII terminal rendering of maze and agent steps.")
+    parser.add_argument("--gui", "--matplotlib", dest="gui", action="store_true", help="Enable live Matplotlib graphical GUI rendering window.")
     args = parser.parse_args()
 
     config = NodeConfig.load(args.config, topology_config_path=args.topology)
+    config.node_id = args.node_id
 
     if args.mode == "tcp":
         topo_data = yaml.safe_load(args.topology.read_text(encoding="utf-8"))
@@ -133,34 +122,48 @@ def main():
     services = build_services(config, transport)
     scheduler = NodeScheduler(services, transport)
     live_view = LiveTerminalView(node_id=args.node_id, mode=args.mode, enabled=args.render)
+    gui_view = MatplotlibLiveView(node_id=args.node_id, enabled=args.gui)
 
-    coalition_history = []
-    print(f"[{args.node_id}] Starting node execution for {args.rounds} rounds (inter-round delay: {args.round_delay}s)...")
+    def step_cb(trainer):
+        if args.render:
+            live_view.render_step(trainer.env, trainer.episode_count, trainer.total_env_steps)
+        if args.gui:
+            goal_reached = False
+            if hasattr(trainer.env, "_exit_obj") and hasattr(trainer.env, "_agent_objs"):
+                goal_reached = all(
+                    trainer.env._exit_obj.is_usable_by(trainer.env.maze, trainer.env._agent_objs[aid].position)
+                    for aid in trainer.env.possible_agents
+                )
+            step_count = getattr(trainer.env, "_step_count", 0)
+            max_steps = getattr(trainer.env, "max_episode_steps", 100)
 
-    try:
-        for r in range(1, args.rounds + 1):
-            def step_cb(t):
-                current_members = sorted(services.coalition_manager.members)
-                live_view.update(t, current_round=r, total_rounds=args.rounds, coalition_members=current_members)
+            gui_view.render_step(
+                trainer.env,
+                episode_count=trainer.episode_count,
+                total_env_steps=trainer.total_env_steps,
+                loss=trainer.last_loss,
+                reward=step_count * -0.01 + (10.0 if goal_reached else 0.0),
+                epsilon=trainer._epsilon_for_episode(trainer.episode_count),
+                coalition=scheduler.active_coalition,
+                goal_reached=goal_reached,
+                timeout=step_count >= max_steps and not goal_reached,
+            )
 
-            scheduler.run_round(on_step=step_cb if args.render else None)
-            members = sorted(services.coalition_manager.members)
-            coalition_history.append({"round": r, "coalitions": {args.node_id: members}})
-            print(f"[{args.node_id}] Round {r}/{args.rounds} complete | Active Coalition: {members}")
-            if args.round_delay > 0 and r < args.rounds:
-                time.sleep(args.round_delay)
-    finally:
-        if isinstance(transport, TCPTransport):
-            transport.close()
+    print(f"[{args.node_id}] Starting node execution for {args.rounds} rounds (inter-round delay: {args.round_delay:.1f}s)...")
+    for r in range(args.rounds):
+        coalition = scheduler.run_round(on_step=step_cb if (args.render or args.gui) else None)
+        print(f"[{args.node_id}] Round {r+1}/{args.rounds} complete | Active Coalition: {coalition}")
+        if r < args.rounds - 1 and args.round_delay > 0:
+            time.sleep(args.round_delay)
 
-    # Automatically generate post-training plots and report in node's evaluation directory
-    eval_dir = generate_node_evaluation_report(
-        node_id=args.node_id,
-        coalition_history=coalition_history,
-        env=services.env,
-        log_dir=services.step_logger.log_dir,
-    )
-    print(f"\n[{args.node_id}] All evaluation plots & dashboard saved to: {eval_dir}")
+    if args.mode == "tcp":
+        transport.close()
+    if args.gui:
+        gui_view.close()
+
+    # Automatically generate evaluation summary & visualization PNGs upon training completion
+    from visualization.auto_evaluator import generate_node_evaluation
+    generate_node_evaluation(args.node_id)
 
 
 if __name__ == "__main__":

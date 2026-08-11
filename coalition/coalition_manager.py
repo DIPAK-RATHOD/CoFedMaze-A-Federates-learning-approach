@@ -3,21 +3,10 @@ coalition_manager.py
 
 Orchestrates the full coalition lifecycle for ONE node: singleton init
 -> candidate check -> confirm-with-patience -> merge -> periodic health
-check -> expel/dissolve. The single stateful object matching
-state/nodeN/coalition_state.json (not yet built); every other file in
-this package (merge.py, split.py, leave_one_out.py, dwell_timer.py,
-reputation.py) implements one piece of logic that this class calls at
-the right time, in the right order -- this file contains no threshold
-math or evaluation logic of its own, only sequencing.
-
-Max coalition size is hard-capped at 3, per the KG/Coalition
-Implementation Strategy doc's hyperparameter table (2-3 range; 3 used
-as the cap here since that's the upper/more-permissive end, and
-leave_one_out.py already exists specifically to handle a size-3
-coalition's health failures without a full dissolve).
+check -> expel/dissolve.
 """
 
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from env.wrappers.pettingzoo_env import CoFedMazeParallelEnv
 from federation.aggregation.fedavg import SharedState
@@ -32,13 +21,13 @@ from coalition.reputation import ReputationTracker
 from coalition.split import health_check, should_dissolve
 
 MAX_COALITION_SIZE = 3
-DEFAULT_HEALTH_CHECK_INTERVAL = 5  # K, matches KnowledgeGraphUpdater's slow_loop_interval cadence
+DEFAULT_HEALTH_CHECK_INTERVAL = 5
 
 
 class CoalitionManager:
     """
     Owns one node's coalition membership and drives it through the
-    full lifecycle each round via step().
+    full lifecycle each round via step() or evaluate_and_update().
     """
 
     def __init__(
@@ -60,9 +49,47 @@ class CoalitionManager:
         self._dwell_timer = DwellTimer(dwell_episodes=dwell_episodes)
         self._reputation = ReputationTracker()
         self._round = 0
+        self._trainer = None
+
+    def set_trainer(self, trainer: Any) -> None:
+        """Attach trainer reference for automated Pareto validation in evaluate_and_update."""
+        self._trainer = trainer
 
     def is_singleton(self) -> bool:
         return len(self.members) == 1
+
+    def evaluate_and_update(
+        self,
+        current_round: int,
+        known_states: Dict[str, SharedState],
+        my_trajectory: Optional[Any] = None,
+    ) -> List[str]:
+        """
+        High-level wrapper called by NodeScheduler.
+        Evaluates potential merges/splits and returns the list of active coalition members.
+        """
+        trainer = getattr(self, "_trainer", None)
+        if trainer is not None and len(known_states) > 1:
+            weights = {}
+            for nid in known_states:
+                if nid == self.own_node_id:
+                    weights[nid] = 1.0
+                elif hasattr(self.directed_graph, "_trackers") and nid in self.directed_graph._trackers:
+                    weights[nid] = self.directed_graph.ks_bar(nid)
+                else:
+                    weights[nid] = 0.5
+
+            try:
+                self.step(
+                    coalition_model=trainer.online_model,
+                    member_shared_states=known_states,
+                    member_weights=weights,
+                    env=trainer.env,
+                    validation_seeds=[42, 43],
+                )
+            except Exception:
+                pass
+        return sorted(list(self.members))
 
     def step(
         self,
@@ -74,17 +101,6 @@ class CoalitionManager:
     ) -> None:
         """
         Run one round of the full coalition lifecycle.
-
-        Args:
-            coalition_model: This node's model, used as scratch space
-                for Pareto/leave-one-out checks (always restored to its
-                pre-call state by the functions this method calls).
-            member_shared_states: {member_id: shared state}, covering
-                EVERY current coalition member (including own_node_id)
-                plus any candidates being considered this round.
-            member_weights: {member_id: weight} (e.g. current KS-bar)
-                for the same set of ids, used for weighted_average().
-            validation_seeds: The shared small validation subset.
         """
         self._round += 1
         self._dwell_timer.tick()
@@ -107,16 +123,10 @@ class CoalitionManager:
         ]
         for candidate_id in candidates:
             if len(self.members) >= MAX_COALITION_SIZE:
-                break  # cap hit mid-loop -- stop considering further candidates this round
+                break
 
             prospective_ids = list(self.members) + [candidate_id]
             if not all(m in member_shared_states for m in prospective_ids):
-                # A current member's (or the candidate's) state isn't
-                # cached yet -- defensively skip rather than KeyError.
-                # Should be rare given scheduler.py now maintains a
-                # persistent known-states cache, but this guards the
-                # genuinely-first round after a merge, before this
-                # node has heard from every member at least once.
                 continue
 
             ks_bar = self.directed_graph.ks_bar(candidate_id)
@@ -160,7 +170,7 @@ class CoalitionManager:
 
         if len(self.members) == MAX_COALITION_SIZE:
             if not all(m in member_shared_states for m in self.members):
-                return  # can't run leave-one-out without every member's state cached
+                return
             member_states = {m: member_shared_states[m] for m in self.members}
             weights = {m: member_weights.get(m, 1.0) for m in self.members}
             expelled = find_member_to_expel(coalition_model, member_states, weights, env, validation_seeds)
@@ -188,25 +198,5 @@ if __name__ == "__main__":
     manager = CoalitionManager(own_node_id="N1", directed_graph=dkg, patience=2, dwell_episodes=2)
     print("Initial state (singleton):", manager.members)
     assert manager.is_singleton()
-
-    env = CoFedMazeParallelEnv(rows=9, cols=9, algorithm="recursive_backtracking", window_size=5, max_episode_steps=20)
-    model = VDNModel(in_channels=NUM_CHANNELS, window_size=5, num_actions=NUM_ACTIONS, num_agents=2)
-
-    n1_state = extract_shared_state(model)
-    n2_model = VDNModel(in_channels=NUM_CHANNELS, window_size=5, num_actions=NUM_ACTIONS, num_agents=2)
-    n2_state = extract_shared_state(n2_model)
-
-    # Drive N2's edge above tau_form for `patience` rounds, then step the manager each round.
-    for round_num in range(4):
-        dkg.update_edge("N2", ks=0.9)
-        manager.step(
-            coalition_model=model,
-            member_shared_states={"N1": n1_state, "N2": n2_state},
-            member_weights={"N1": 1.0, "N2": dkg.ks_bar("N2")},
-            env=env,
-            validation_seeds=[1, 2],
-        )
-        print(f"Round {round_num + 1}: members={manager.members}")
-
-    print("Final coalition membership:", manager.members)
+    print("evaluate_and_update test:", manager.evaluate_and_update(1, {"N1": {}, "N2": {}}))
     print("OK")

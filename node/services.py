@@ -68,7 +68,9 @@ def build_services(config: NodeConfig, transport: Transport) -> NodeServices:
         in_channels=NUM_CHANNELS,
         num_actions=NUM_ACTIONS,
         step_logger=step_logger,
-        checkpoint_dir=checkpoint_dir, auto_resume=True,
+        checkpoint_dir=checkpoint_dir,
+        epsilon_decay_episodes=200,
+        auto_resume=True,
     )
 
     physical_graph = PhysicalGraph.from_yaml(config.topology_path)

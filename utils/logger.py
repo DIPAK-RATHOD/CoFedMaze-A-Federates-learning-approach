@@ -158,6 +158,12 @@ class StepLogger:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     import tempfile

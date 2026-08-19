@@ -80,6 +80,20 @@ def apply_shared_state(model: VDNModel, shared_state: Dict[str, Any]) -> None:
     model.memory.load_state_dict(shared_state["memory"])
 
 
+def blend_shared_state(model: VDNModel, candidate_shared_state: Dict[str, Any], alpha: float = 0.25) -> None:
+    """
+    Soft parameter blending for shared encoder and memory weights during federated updates:
+    shared_local = (1 - alpha) * shared_local + alpha * candidate_shared
+    """
+    with torch.no_grad():
+        for name, param in model.encoder.named_parameters():
+            if name in candidate_shared_state["encoder"]:
+                param.data.mul_(1.0 - alpha).add_(candidate_shared_state["encoder"][name].to(param.device), alpha=alpha)
+        for name, param in model.memory.named_parameters():
+            if name in candidate_shared_state["memory"]:
+                param.data.mul_(1.0 - alpha).add_(candidate_shared_state["memory"][name].to(param.device), alpha=alpha)
+
+
 def _run_greedy_episode(env: CoFedMazeParallelEnv, model: VDNModel, seed: int) -> float:
     """
     Play one full episode with GREEDY (non-exploratory) action

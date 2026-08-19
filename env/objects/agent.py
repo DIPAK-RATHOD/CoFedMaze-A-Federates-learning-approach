@@ -63,7 +63,12 @@ class Agent:
             )
 
         target_cell = maze.grid.get_logical_cell(logical_row, logical_col)
-        if target_cell.contains_agent is not None and target_cell.contains_agent != self.agent_id:
+        is_exit_cell = (logical_row, logical_col) == maze.exit_position
+        if (
+            not is_exit_cell
+            and target_cell.contains_agent is not None
+            and target_cell.contains_agent != self.agent_id
+        ):
             raise ValueError(
                 f"Cell (logical {logical_row}, {logical_col}) is already occupied by "
                 f"agent {target_cell.contains_agent!r}"

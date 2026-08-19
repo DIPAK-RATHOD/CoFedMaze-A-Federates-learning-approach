@@ -74,30 +74,51 @@ class Policy:
                 new_hidden: (1, hidden_dim) updated hidden state to pass
                     into the next call.
         """
+    def _apply_action_mask(self, observation: torch.Tensor, q_values: torch.Tensor) -> torch.Tensor:
+        """Mask out movement actions leading into solid walls and unneeded INTERACT actions."""
+        if observation.dim() == 4 and observation.shape[1] >= 4:
+            half_w = observation.shape[2] // 2
+            half_h = observation.shape[3] // 2
+            masked_q = q_values.clone()
+            for move_action in range(4):
+                if observation[0, move_action, half_w, half_h] < 0.5:
+                    masked_q[move_action] = -1e9
+            
+            # Mask INTERACT (4) if no adjacent locked door is present in local observation window
+            if observation.shape[1] > 7 and observation[0, 7].sum() < 0.5:
+                masked_q[4] = -1e9
+
+            return masked_q
+        return q_values
+
+    def act(
+        self, observation: torch.Tensor, hidden: torch.Tensor
+    ) -> Tuple[int, torch.Tensor, torch.Tensor]:
+        """
+        Choose an action using the wrapped exploration strategy with wall action masking.
+        """
         with torch.no_grad():
             q_values_batched, new_hidden = self.model.forward_agent(
                 observation, hidden, self.agent_index
             )
         q_values = q_values_batched.squeeze(0)
-        action = self.selector.select(q_values)
+        masked_q = self._apply_action_mask(observation, q_values)
+        action = self.selector.select(masked_q)
         return action, q_values, new_hidden
 
     def act_greedy(
         self, observation: torch.Tensor, hidden: torch.Tensor
     ) -> Tuple[int, torch.Tensor, torch.Tensor]:
         """
-        Choose the greedy (argmax) action, bypassing exploration —
-        intended for evaluation/deployment rather than training
-        rollouts.
-
-        Args/Returns: same shape contract as act().
+        Choose the greedy (argmax) action with wall action masking.
         """
         with torch.no_grad():
             q_values_batched, new_hidden = self.model.forward_agent(
                 observation, hidden, self.agent_index
             )
         q_values = q_values_batched.squeeze(0)
-        action = int(torch.argmax(q_values).item())
+        masked_q = self._apply_action_mask(observation, q_values)
+        action = int(torch.argmax(masked_q).item())
         return action, q_values, new_hidden
 
 

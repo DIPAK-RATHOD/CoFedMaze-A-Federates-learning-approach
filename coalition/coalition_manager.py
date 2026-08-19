@@ -19,6 +19,7 @@ from coalition.leave_one_out import find_member_to_expel
 from coalition.merge import DEFAULT_PATIENCE, MergeConfirmationTracker, pareto_check
 from coalition.reputation import ReputationTracker
 from coalition.split import health_check, should_dissolve
+from federation.validation.transfer_validation import blend_shared_state
 
 MAX_COALITION_SIZE = 3
 DEFAULT_HEALTH_CHECK_INTERVAL = 5
@@ -142,6 +143,7 @@ class CoalitionManager:
 
             if pareto_check(coalition_model, prospective_aggregate, env, validation_seeds):
                 self.members.add(candidate_id)
+                blend_shared_state(coalition_model, prospective_aggregate, alpha=0.25)
                 self._merge_tracker.reset(candidate_id)
                 self._dwell_timer.start()
                 self._reputation.record(candidate_id, self._round, "merge", ks_bar)

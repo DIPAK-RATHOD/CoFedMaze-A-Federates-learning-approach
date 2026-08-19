@@ -1,0 +1,30 @@
+{
+  "node_id": "N1",
+  "checkpoint_episode": 100,
+  "total_env_steps": 19209,
+  "num_trials": 3,
+  "success_rate": 0.0,
+  "trials": [
+    {
+      "seed": 101,
+      "outcome": "TIMEOUT",
+      "goal_reached": false,
+      "steps": 200,
+      "total_reward": 3.2199999999999807
+    },
+    {
+      "seed": 102,
+      "outcome": "TIMEOUT",
+      "goal_reached": false,
+      "steps": 200,
+      "total_reward": 22.140000000000008
+    },
+    {
+      "seed": 103,
+      "outcome": "TIMEOUT",
+      "goal_reached": false,
+      "steps": 200,
+      "total_reward": 20.240000000000077
+    }
+  ]
+}

@@ -153,6 +153,10 @@ def generate_node_evaluation_report(
     return eval_dir
 
 
+# Function Alias for backwards compatibility
+generate_node_evaluation = generate_node_evaluation_report
+
+
 if __name__ == "__main__":
     from env.wrappers.pettingzoo_env import CoFedMazeParallelEnv
 

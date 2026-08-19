@@ -15,11 +15,11 @@ import numpy as np
 import torch
 
 from env.core.constants import AGENT_A, AGENT_B
-from env.wrappers.pettingzoo_env import CoFedMazeParallelEnv
+from env.wrappers.pettingzoo_env import SUCCESS_REWARD, CoFedMazeParallelEnv
 from marl.agents.action_selector import EpsilonGreedySelector
 from marl.agents.policy import Policy
 from marl.agents.vdn_agent import VDNAgent
-from marl.losses.vdn_loss import compute_vdn_loss, hard_update_target_network
+from marl.losses.vdn_loss import compute_vdn_loss, hard_update_target_network, soft_update_target_network
 from marl.models.vdn import VDNModel
 from marl.replay.replay_buffer import ReplayBuffer
 from marl.replay.sampler import Sampler
@@ -43,16 +43,23 @@ class LocalTrainer:
         num_actions: int,
         embedding_dim: int = 128,
         hidden_dim: int = 128,
-        buffer_capacity: int = 200,
-        sequence_length: int = 20,
+        buffer_capacity: int = 1000,
+        sequence_length: int = 50,
         batch_size: int = 16,
         min_buffer_size: int = 8,
         gamma: float = 0.99,
-        learning_rate: float = 1e-3,
+        learning_rate: float = 3e-4,
         target_update_interval_episodes: int = 10,
+        use_soft_target: bool = True,
+        tau: float = 0.015,
+        max_grad_norm: float = 10.0,
         epsilon_start: float = 1.0,
-        epsilon_end: float = 0.05,
+        epsilon_end: float = 0.10,
         epsilon_decay_episodes: int = 200,
+        curriculum_episodes: int = 300,
+        validation_seeds: Optional[List[int]] = None,
+        test_seeds: Optional[List[int]] = None,
+        pretrain_expert: bool = True,
         device: Optional[torch.device] = None,
         master_seed: Optional[int] = None,
         step_logger: Optional[StepLogger] = None,
@@ -65,9 +72,18 @@ class LocalTrainer:
         self.batch_size = batch_size
         self.min_buffer_size = min_buffer_size
         self.target_update_interval_episodes = target_update_interval_episodes
+        self.use_soft_target = use_soft_target
+        self.tau = tau
+        self.max_grad_norm = max_grad_norm
         self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay_episodes = epsilon_decay_episodes
+        self.curriculum_episodes = curriculum_episodes
+        self.validation_seeds = validation_seeds or list(range(1001, 1021))
+        self.test_seeds = test_seeds or list(range(2001, 2021))
+        self.best_success_rate: float = -1.0
+        self.best_avg_steps_to_goal: float = float("inf")
+        self.evaluation_count: int = 0
         self.step_logger = step_logger
         self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir is not None else None
         self.last_loss: Optional[float] = None
@@ -89,7 +105,7 @@ class LocalTrainer:
             AGENT_A: EpsilonGreedySelector(epsilon=epsilon_start, rng=self._child_rng()),
             AGENT_B: EpsilonGreedySelector(epsilon=epsilon_start, rng=self._child_rng()),
         }
-        self._policies = {
+        self._policies: Dict[str, Policy] = {
             AGENT_A: Policy(self.online_model, agent_index=0, selector=self._selectors[AGENT_A]),
             AGENT_B: Policy(self.online_model, agent_index=1, selector=self._selectors[AGENT_B]),
         }
@@ -102,6 +118,16 @@ class LocalTrainer:
 
         self.episode_count = 0
         self.total_env_steps = 0
+
+        # Section 3.2 & 3.3 Workplan Warm-Start: Pre-fill replay buffer with expert demonstrations
+        if pretrain_expert:
+            from marl.replay.expert_demos import prefill_replay_buffer
+            node_name = getattr(self.step_logger, "node_id", "Local")
+            added = prefill_replay_buffer(self.env, self.buffer, num_demos=10)
+            if added > 0:
+                print(f"[{node_name}] Expert Warm-Start: Pre-filled replay buffer with {added} BFS expert trajectories.")
+                for _ in range(20):
+                    self.train_step()
 
         # Auto-resume from checkpoint if available
         if self.checkpoint_dir is not None:
@@ -146,6 +172,13 @@ class LocalTrainer:
         self.episode_count = payload.get("episode_count", 0)
         self.total_env_steps = payload.get("total_env_steps", 0)
 
+        from utils.checkpoint import load_best_metadata
+        best_meta = load_best_metadata(checkpoint_dir)
+        if best_meta is not None:
+            self.best_success_rate = best_meta.get("validation_success_rate", -1.0)
+            avg_s = best_meta.get("average_steps_to_goal")
+            self.best_avg_steps_to_goal = float(avg_s) if avg_s is not None else float("inf")
+
         restored_eps = self._epsilon_for_episode(self.episode_count)
         for selector in self._selectors.values():
             selector.set_epsilon(restored_eps)
@@ -178,6 +211,34 @@ class LocalTrainer:
             metadata=meta,
         )
 
+    def save_best_checkpoint(
+        self, checkpoint_dir: Union[str, Path], validation_summary: Dict[str, Any]
+    ) -> None:
+        """
+        Persist best evaluated trainer state to best.pt and write best_metadata.json.
+        """
+        from utils.checkpoint import save_best_checkpoint as save_best_ckpt
+
+        meta = {
+            "algorithm": self.env.algorithm,
+            "window_size": self.env.window_size,
+            "num_actions": 5,
+        }
+        if self.step_logger is not None:
+            meta.setdefault("restart_count", self.step_logger.restart_count)
+            meta.setdefault("run_id", self.step_logger.run_id)
+
+        save_best_ckpt(
+            directory=checkpoint_dir,
+            model=self.online_model,
+            optimizer=self.optimizer,
+            episode_count=self.episode_count,
+            total_env_steps=self.total_env_steps,
+            target_model=self.target_model,
+            metadata=meta,
+            validation_summary=validation_summary,
+        )
+
     def _child_rng(self) -> random.Random:
         return random.Random(self._master_rng.randrange(2**31))
 
@@ -194,6 +255,7 @@ class LocalTrainer:
         self,
         on_step: Optional[Callable[["LocalTrainer"], None]] = None,
         eval_mode: bool = False,
+        seed: Optional[int] = None,
     ) -> Trajectory:
         """
         Play one full episode against self.env using current online network.
@@ -203,7 +265,13 @@ class LocalTrainer:
         for selector in self._selectors.values():
             selector.set_epsilon(epsilon)
 
-        seed = self._master_rng.randrange(2**31)
+        if seed is None:
+            curriculum_pool = [101, 102, 103, 104, 105, 106, 107, 108, 109, 110]
+            if not eval_mode and self.episode_count < self.curriculum_episodes:
+                seed = curriculum_pool[self.episode_count % len(curriculum_pool)]
+            else:
+                seed = self._master_rng.randrange(2**31)
+
         obs, _ = self.env.reset(seed=seed)
         for agent in self._agents.values():
             agent.reset_hidden()
@@ -265,45 +333,133 @@ class LocalTrainer:
 
         if not eval_mode:
             self.episode_count += 1
+            if self.step_logger is not None:
+                self.step_logger.log_episode_summary({
+                    "episode": self.episode_count,
+                    "length": step_in_ep,
+                    "total_reward": trajectory.total_reward(),
+                    "epsilon": epsilon,
+                    "loss": self.last_loss,
+                    "goal_reached": goal_reached,
+                    "success": 1 if goal_reached else 0,
+                    "steps_to_goal": step_in_ep if goal_reached else None,
+                    "timeout": not goal_reached,
+                    "evaluation": False,
+                })
             if self.checkpoint_dir is not None:
                 self.save_checkpoint(self.checkpoint_dir)
 
         return trajectory
 
-    def evaluate(self, num_episodes: int = 5) -> Dict[str, Any]:
+    def evaluate(
+        self,
+        num_episodes: Optional[int] = None,
+        validation_seeds: Optional[List[int]] = None,
+        current_round: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """
         Run evaluation episodes with epsilon = 0.0 (deterministic policy)
-        and record evaluation metrics.
+        on fixed validation seeds and manage best.pt checkpoint.
         """
+        import datetime
+
+        self.evaluation_count += 1
+        eval_id = f"eval_{self.evaluation_count:03d}"
+
+        if validation_seeds is not None:
+            seeds = validation_seeds
+        elif num_episodes is not None and num_episodes < len(self.validation_seeds):
+            seeds = self.validation_seeds[:num_episodes]
+        else:
+            seeds = self.validation_seeds
+
+        num_trials = len(seeds)
         successful_steps = []
         eval_rewards = []
         successes = 0
 
-        for _ in range(num_episodes):
-            traj = self.run_episode(eval_mode=True)
+        for trial_idx, seed in enumerate(seeds, start=1):
+            traj = self.run_episode(eval_mode=True, seed=seed)
             tot_rew = traj.total_reward()
             eval_rewards.append(tot_rew)
-            if traj.goal_reached:
+            goal_reached = traj.goal_reached
+
+            if goal_reached:
                 successes += 1
                 successful_steps.append(len(traj))
 
-        success_rate = (successes / num_episodes) * 100.0
-        avg_steps = (sum(successful_steps) / len(successful_steps)) if successful_steps else None
-        avg_reward = sum(eval_rewards) / num_episodes
-        timeout_rate = ((num_episodes - successes) / num_episodes) * 100.0
+            if self.step_logger is not None:
+                self.step_logger.log_episode_summary({
+                    "node_id": getattr(self.step_logger, "node_id", "N1"),
+                    "round": current_round,
+                    "evaluation_id": eval_id,
+                    "eval_trial": trial_idx,
+                    "maze_seed": seed,
+                    "training_episode": self.episode_count,
+                    "length": len(traj),
+                    "total_reward": tot_rew,
+                    "epsilon": 0.0,
+                    "goal_reached": goal_reached,
+                    "success": 1 if goal_reached else 0,
+                    "steps_to_goal": len(traj) if goal_reached else None,
+                    "timeout": traj.timeout,
+                    "evaluation": True,
+                })
+
+        success_rate = (successes / num_trials) * 100.0
+        avg_steps = (sum(successful_steps) / len(successful_steps)) if successful_steps else float("inf")
+        avg_reward = sum(eval_rewards) / num_trials
+        timeout_rate = ((num_trials - successes) / num_trials) * 100.0
+
+        best_model_updated = False
+        if success_rate > self.best_success_rate:
+            best_model_updated = True
+        elif success_rate == self.best_success_rate and self.best_success_rate > -1.0:
+            if avg_steps < self.best_avg_steps_to_goal:
+                best_model_updated = True
+
+        node_id_str = getattr(self.step_logger, "node_id", "N1")
+
+        if best_model_updated:
+            self.best_success_rate = success_rate
+            self.best_avg_steps_to_goal = avg_steps
+
+            val_summary = {
+                "node_id": node_id_str,
+                "episode": self.episode_count,
+                "total_env_steps": self.total_env_steps,
+                "validation_success_rate": success_rate,
+                "average_steps_to_goal": avg_steps if avg_steps != float("inf") else None,
+                "timeout_rate": timeout_rate,
+                "average_reward": avg_reward,
+                "validation_episodes": num_trials,
+                "validation_seeds": seeds,
+                "selected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+
+            if self.checkpoint_dir is not None:
+                self.save_best_checkpoint(self.checkpoint_dir, val_summary)
+
+        avg_steps_print = f"{avg_steps:.2f}" if avg_steps != float("inf") else "None"
+        print(
+            f"[{node_id_str}] {node_id_str} | episode {self.episode_count} | "
+            f"success_rate={success_rate:.1f}% | avg_steps={avg_steps_print} | "
+            f"timeout={timeout_rate:.1f}% | best_model_updated={best_model_updated}"
+        )
 
         eval_summary = {
-            "episode": self.episode_count,
-            "evaluation": True,
-            "success_rate": success_rate,
-            "avg_steps_to_goal": avg_steps,
-            "evaluation_reward": avg_reward,
+            "node_id": node_id_str,
+            "round": current_round,
+            "training_episode": self.episode_count,
+            "evaluation_id": eval_id,
+            "validation_success_rate": success_rate,
+            "average_steps_to_goal": avg_steps if avg_steps != float("inf") else None,
             "timeout_rate": timeout_rate,
-            "num_eval_episodes": num_episodes,
+            "average_reward": avg_reward,
+            "best_model_updated": best_model_updated,
+            "num_eval_episodes": num_trials,
+            "success_rate": success_rate,
         }
-
-        if self.step_logger is not None:
-            self.step_logger.log_episode_summary(eval_summary)
 
         return eval_summary
 
@@ -315,9 +471,34 @@ class LocalTrainer:
         loss = compute_vdn_loss(self.online_model, self.target_model, batch, gamma=self.gamma)
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.online_model.parameters(), max_norm=self.max_grad_norm)
         self.optimizer.step()
+        if self.use_soft_target:
+            soft_update_target_network(self.online_model, self.target_model, tau=self.tau)
         self.last_loss = loss.item()
         return self.last_loss
+
+    def print_configuration_summary(self, federation_enabled: bool = False, alpha: float = 0.25) -> None:
+        """Print pre-training configuration summary."""
+        node_name = getattr(self.step_logger, "node_id", "Local")
+        target_mode = f"Polyak/soft per step (tau={self.tau})" if self.use_soft_target else "hard"
+        grad_clip_str = f"clip_grad_norm (max_norm={self.max_grad_norm})"
+        val_range_str = f"{min(self.validation_seeds)}–{max(self.validation_seeds)} ({len(self.validation_seeds)} seeds)"
+        test_range_str = f"{min(self.test_seeds)}–{max(self.test_seeds)} ({len(self.test_seeds)} seeds)"
+        fed_status = f"ENABLED (alpha={alpha})" if federation_enabled else "DISABLED"
+
+        print("=" * 75)
+        print(f"  PRE-TRAINING CONFIGURATION SUMMARY — NODE [{node_name}]")
+        print("=" * 75)
+        print(f"  - GRU Sequence Length:               {self.sampler.sequence_length}")
+        print(f"  - Target Update Mode:                {target_mode}")
+        print(f"  - Polyak Tau (tau):                  {self.tau}")
+        print(f"  - Gradient Clipping:                 {grad_clip_str}")
+        print(f"  - Team Success Reward:               {SUCCESS_REWARD}")
+        print(f"  - Validation Seeds (Model Selection): {val_range_str}")
+        print(f"  - Test Seeds (Held-Out Final Eval):  {test_range_str}")
+        print(f"  - Federation & Alpha-Blending:       {fed_status}")
+        print("=" * 75)
 
     def run(
         self,

@@ -79,6 +79,10 @@ class NodeScheduler:
             my_trajectory=trajectory,
         )
 
+        # Periodic deterministic evaluation (epsilon = 0.0) every 10 rounds
+        if self.round % 10 == 0:
+            self.services.trainer.evaluate(current_round=self.round)
+
         return self.active_coalition
 
 
@@ -149,6 +153,7 @@ def main():
                 timeout=step_count >= max_steps and not goal_reached,
             )
 
+    services.trainer.print_configuration_summary(federation_enabled=(args.mode == "tcp"), alpha=0.25)
     print(f"[{args.node_id}] Starting node execution for {args.rounds} rounds (inter-round delay: {args.round_delay:.1f}s)...")
     for r in range(args.rounds):
         coalition = scheduler.run_round(on_step=step_cb if (args.render or args.gui) else None)
@@ -162,8 +167,8 @@ def main():
         gui_view.close()
 
     # Automatically generate evaluation summary & visualization PNGs upon training completion
-    from visualization.auto_evaluator import generate_node_evaluation
-    generate_node_evaluation(args.node_id)
+    from visualization.auto_evaluator import generate_node_evaluation_report
+    generate_node_evaluation_report(args.node_id)
 
 
 if __name__ == "__main__":

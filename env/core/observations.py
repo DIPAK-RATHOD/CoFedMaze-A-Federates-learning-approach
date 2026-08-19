@@ -1,4 +1,4 @@
-﻿"""
+"""
 observations.py
 
 Builds the egocentric, multi-channel observation array consumed by
@@ -194,10 +194,6 @@ def build_observation(
             other_agent = cell.contains_agent is not None and cell.contains_agent != self_agent_id
             obs[CONTAINS_OTHER_AGENT, wr, wc] = other_agent
 
-            obs[CONTAINS_EXIT, wr, wc] = (
-                maze.exit_position is not None and logical_position == maze.exit_position
-            )
-
             obs[CONTAINS_KEY, wr, wc] = cell.contains_key
 
             if door_registry is not None and logical_position in door_registry:
@@ -206,11 +202,37 @@ def build_observation(
                 obs[DOOR_BLOCKING, wr, wc] = cell.contains_door
 
             if checkpoint_registry is not None and logical_position in checkpoint_registry:
-                obs[CHECKPOINT_UNREACHED, wr, wc] = not checkpoint_registry[logical_position].is_reached
+                obs[CHECKPOINT_UNREACHED, wr, wc] = 1.0 if not checkpoint_registry[logical_position].is_reached else 0.0
             else:
-                obs[CHECKPOINT_UNREACHED, wr, wc] = cell.contains_checkpoint
+                obs[CHECKPOINT_UNREACHED, wr, wc] = 1.0 if cell.contains_checkpoint else 0.0
 
             obs[CONTAINS_OBSTACLE, wr, wc] = cell.contains_obstacle
+
+    # Directional beacon projection for distant Exit (if outside local window)
+    if maze.exit_position is not None:
+        rel_r = maze.exit_position[0] - agent_position[0]
+        rel_c = maze.exit_position[1] - agent_position[1]
+        if abs(rel_r) <= half and abs(rel_c) <= half:
+            obs[CONTAINS_EXIT, half + rel_r, half + rel_c] = 1.0
+        else:
+            max_dist = max(abs(rel_r), abs(rel_c))
+            proj_r = int(round(half * (rel_r / max_dist)))
+            proj_c = int(round(half * (rel_c / max_dist)))
+            obs[CONTAINS_EXIT, half + proj_r, half + proj_c] = 0.5
+
+    # Directional beacon projection for distant unreached checkpoints
+    if checkpoint_registry is not None:
+        for cp_pos, cp_obj in checkpoint_registry.items():
+            if not cp_obj.is_reached:
+                rel_r = cp_pos[0] - agent_position[0]
+                rel_c = cp_pos[1] - agent_position[1]
+                if abs(rel_r) <= half and abs(rel_c) <= half:
+                    obs[CHECKPOINT_UNREACHED, half + rel_r, half + rel_c] = 1.0
+                else:
+                    max_dist = max(abs(rel_r), abs(rel_c))
+                    proj_r = int(round(half * (rel_r / max_dist)))
+                    proj_c = int(round(half * (rel_c / max_dist)))
+                    obs[CHECKPOINT_UNREACHED, half + proj_r, half + proj_c] = 0.5
 
     return obs
 

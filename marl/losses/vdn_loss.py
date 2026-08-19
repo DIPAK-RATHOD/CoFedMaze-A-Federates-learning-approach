@@ -166,6 +166,16 @@ def hard_update_target_network(online_model: VDNModel, target_model: VDNModel) -
     target_model.load_state_dict(online_model.state_dict())
 
 
+def soft_update_target_network(online_model: VDNModel, target_model: VDNModel, tau: float = 0.015) -> None:
+    """
+    Polyak/soft update of target_model parameters toward online_model parameters.
+    target_param = (1 - tau) * target_param + tau * online_param
+    """
+    with torch.no_grad():
+        for target_param, online_param in zip(target_model.parameters(), online_model.parameters()):
+            target_param.data.mul_(1.0 - tau).add_(online_param.data, alpha=tau)
+
+
 if __name__ == "__main__":
     import random
 

@@ -54,11 +54,35 @@ class MatplotlibLiveView:
         self.is_closed = False
 
     def _init_figure(self, rows: int, cols: int):
+        import os
+        import matplotlib
+
+        self.is_headless = False
+        current_backend = matplotlib.get_backend().lower()
+        if current_backend in ["agg", "template", "cairo"]:
+            for backend in ["TkAgg", "Qt5Agg", "GTK3Agg", "WXAgg"]:
+                try:
+                    matplotlib.use(backend)
+                    break
+                except Exception:
+                    pass
+
         import matplotlib.pyplot as plt
 
-        plt.ion()  # Enable interactive GUI mode
+        if matplotlib.get_backend().lower() in ["agg", "template"]:
+            if not os.environ.get("DISPLAY"):
+                print(
+                    f"[{self.node_id}] Headless Linux environment detected without active $DISPLAY. "
+                    f"Pop-up GUI window disabled, but final 4-panel GUI plot will be saved to visualization/training_gui_plot_{self.node_id}.png upon training completion."
+                )
+            self.is_headless = True
+
+        if not self.is_headless:
+            plt.ion()  # Enable interactive GUI mode
+
         self.fig = plt.figure(figsize=(14, 8), num=f"CoFedMaze Live Training & Evaluation — Node {self.node_id}")
-        self.fig.canvas.mpl_connect("close_event", self._on_close)
+        if not self.is_headless:
+            self.fig.canvas.mpl_connect("close_event", self._on_close)
 
         gs = self.fig.add_gridspec(2, 2, width_ratios=[1.1, 1.0], height_ratios=[1.0, 1.0])
 
@@ -145,6 +169,9 @@ class MatplotlibLiveView:
             except Exception:
                 self.enabled = False
                 return
+
+        if not self.enabled or self.img_plot is None:
+            return
 
         # 1. Update Grid Image (0 = Path/White, 1 = Wall/Black)
         self.img_plot.set_data(walls_array)
@@ -241,13 +268,37 @@ class MatplotlibLiveView:
         )
 
         # 6. Redraw GUI Canvas
+        if not getattr(self, "is_headless", False):
+            try:
+                plt.pause(0.005)  # Process Matplotlib GUI event loop
+            except Exception:
+                pass
+
+    def save_plot(self, output_path: Optional[str] = None) -> str:
+        """
+        Save the final GUI figure plot as a PNG image inside the visualization folder.
+        """
+        if self.fig is None:
+            return ""
+        if output_path is None:
+            import os
+            os.makedirs("visualization", exist_ok=True)
+            output_path = os.path.join("visualization", f"training_gui_plot_{self.node_id}.png")
+        else:
+            import os
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
         try:
-            plt.pause(0.005)  # Process Matplotlib GUI event loop
-        except Exception:
-            pass
+            self.fig.savefig(output_path, dpi=300, bbox_inches="tight")
+            print(f"[{self.node_id}] Saved final GUI training plot to {output_path}")
+            return output_path
+        except Exception as e:
+            print(f"[{self.node_id}] Warning: Could not save GUI plot: {e}")
+            return ""
 
     def close(self) -> None:
         if self.fig is not None:
+            self.save_plot()
             import matplotlib.pyplot as plt
             try:
                 plt.close(self.fig)

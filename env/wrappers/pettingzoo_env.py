@@ -1,4 +1,4 @@
-﻿"""
+"""
 pettingzoo_env.py
 
 Wraps a Maze + two Agents + task-variant objects (checkpoints, key/door
@@ -119,6 +119,7 @@ class StepEvent(NamedTuple):
     newly_reached_checkpoints: List[str]
     newly_collected_keys: List[str]
     newly_unlocked_doors: List[str]
+    newly_reached_exits: Set[AgentID]
     success: bool
     potential_before: float
     potential_after: float
@@ -128,48 +129,55 @@ RewardFn = Callable[["CoFedMazeParallelEnv", StepEvent], Dict[AgentID, float]]
 
 # ---------------------------------------------------------------------------
 # Reward policy -- decided per the discussion in this conversation:
-#   - Shared TEAM reward (required by VDN's single Q_tot TD target, and
-#     matches the workplan's explicit "team rewards" wording, Sec 3.1).
-#   - Lightly shaped via potential-based distance-to-exit shaping (not
-#     specified in the workplan; chosen here because a purely sparse
-#     reward makes the Transfer-Benefit metric's R_old denominator
-#     numerically unstable on small validation subsets -- see the
-#     module docstring's TB discussion).
-#   - Extra penalty on collision (wall/obstacle/locked-door/other-agent),
-#     on top of the base step penalty.
-#   - Immediate one-time bonus for each checkpoint/key/door event.
-#
-# The STRUCTURE above is the decided policy. The MAGNITUDES below are
-# NOT tuned or validated -- they are placeholders sized only to have
-# the right sign and rough relative scale (success >> event bonus >
-# collision penalty > step penalty). Retune once real training runs
-# exist to look at.
+#   - Shared TEAM reward (required by VDN's single Q_tot TD target).
+#   - Lightly shaped via potential-based distance-to-exit shaping.
+#   - Extra penalty on collision (wall/obstacle/locked-door/other-agent).
+#   - Immediate one-time bonus for each checkpoint/key/door/exit event.
 # ---------------------------------------------------------------------------
 STEP_PENALTY = -0.01
 COLLISION_PENALTY = -0.05
 CHECKPOINT_BONUS = 1.0
 KEY_BONUS = 0.5
 DOOR_BONUS = 1.0
-SUCCESS_REWARD = 10.0
+INDIVIDUAL_GOAL_BONUS = 3.0
+SUCCESS_REWARD = 25.0
 SHAPING_GAMMA = 0.99
 
 
 def _default_reward_fn(env: "CoFedMazeParallelEnv", event: StepEvent) -> Dict[AgentID, float]:
     """
-    The decided (structure) / placeholder (magnitudes) reward policy --
-    see the module-level "Reward policy" comment block above and the
-    module docstring's REWARD POLICY warning. Fully shared team value:
-    every agent receives the identical scalar.
+    Shaped team reward policy with one-time individual milestone bonuses & parking support.
     """
-    value = STEP_PENALTY
-    value += COLLISION_PENALTY * len(event.collided_agents)
-    value += CHECKPOINT_BONUS * len(event.newly_reached_checkpoints)
-    value += KEY_BONUS * len(event.newly_collected_keys)
-    value += DOOR_BONUS * len(event.newly_unlocked_doors)
-    value += SHAPING_GAMMA * event.potential_after - event.potential_before
-    if event.success:
-        value += SUCCESS_REWARD
-    return {agent_id: value for agent_id in env.possible_agents}
+    shaping = SHAPING_GAMMA * event.potential_after - event.potential_before
+    rewards = {}
+
+    for aid in env.possible_agents:
+        is_at_exit = False
+        if hasattr(env, "_exit_obj") and hasattr(env, "_agent_objs") and aid in env._agent_objs:
+            is_at_exit = env._exit_obj.is_usable_by(env.maze, env._agent_objs[aid].position)
+
+        # Suppress step penalty if parked at exit goal waiting for partner
+        val = 0.0 if is_at_exit else STEP_PENALTY
+
+        if aid in event.collided_agents:
+            val += COLLISION_PENALTY
+
+        val += CHECKPOINT_BONUS * len(event.newly_reached_checkpoints)
+        val += KEY_BONUS * len(event.newly_collected_keys)
+        val += DOOR_BONUS * len(event.newly_unlocked_doors)
+
+        # ONE-TIME individual goal bonus when an agent NEWLY reaches the exit goal!
+        if aid in event.newly_reached_exits:
+            val += INDIVIDUAL_GOAL_BONUS
+
+        val += shaping
+
+        if event.success:
+            val += SUCCESS_REWARD
+
+        rewards[aid] = val
+
+    return rewards
 
 
 class CoFedMazeParallelEnv(ParallelEnv):
@@ -316,6 +324,7 @@ class CoFedMazeParallelEnv(ParallelEnv):
 
         self._step_count = 0
         self.agents = list(self.possible_agents)
+        self._agents_at_exit: Set[AgentID] = set()
 
         self._distance_to_exit = self._compute_distance_to_exit()
 
@@ -353,6 +362,13 @@ class CoFedMazeParallelEnv(ParallelEnv):
             if checkpoint_reached is not None:
                 newly_reached_checkpoints.append(checkpoint_reached)
 
+        newly_reached_exits: Set[AgentID] = set()
+        for aid in self.possible_agents:
+            if self._exit_obj.is_usable_by(self.maze, self._agent_objs[aid].position):
+                if aid not in self._agents_at_exit:
+                    self._agents_at_exit.add(aid)
+                    newly_reached_exits.add(aid)
+
         if self._checkpoints and all(cp.is_reached for cp in self._checkpoints.values()):
             self._exit_obj.unlock()
 
@@ -369,6 +385,7 @@ class CoFedMazeParallelEnv(ParallelEnv):
             newly_reached_checkpoints=newly_reached_checkpoints,
             newly_collected_keys=newly_collected_keys,
             newly_unlocked_doors=newly_unlocked_doors,
+            newly_reached_exits=newly_reached_exits,
             success=success,
             potential_before=potential_before,
             potential_after=potential_after,

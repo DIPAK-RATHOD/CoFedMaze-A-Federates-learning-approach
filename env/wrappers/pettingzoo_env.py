@@ -173,7 +173,7 @@ def _default_reward_fn(env: "CoFedMazeParallelEnv", event: StepEvent) -> Dict[Ag
         val += shaping
 
         if event.success:
-            val += SUCCESS_REWARD
+            val += env.success_reward if hasattr(env, "success_reward") else SUCCESS_REWARD
 
         rewards[aid] = val
 
@@ -199,11 +199,12 @@ class CoFedMazeParallelEnv(ParallelEnv):
         num_obstacles: int = 0,
         num_key_door_pairs: int = 0,
         reward_fn: Optional[RewardFn] = None,
+        success_reward: Optional[float] = None,
         render_mode: Optional[str] = None,
     ) -> None:
         """
         Args:
-            rows, cols: Raw grid dimensions (must be odd -- see Grid).
+            rows, cols: Dimensions of the underlying maze grid.
             algorithm: One of env.generator.generator_factory.available_generators().
             window_size: Odd, >=3 -- passed through to build_observation().
             max_episode_steps: Truncation limit.
@@ -214,6 +215,7 @@ class CoFedMazeParallelEnv(ParallelEnv):
             reward_fn: Overrides _default_reward_fn -- see the
                 module-level warning about reward policy being
                 unresolved. Signature: (env, success: bool) -> {agent_id: float}.
+            success_reward: Team reward bonus for joint escape (defaults to SUCCESS_REWARD=25.0).
             render_mode: "ascii" or None.
         """
         self.rows = rows
@@ -224,6 +226,7 @@ class CoFedMazeParallelEnv(ParallelEnv):
         self.num_checkpoints = num_checkpoints
         self.num_obstacles = num_obstacles
         self.num_key_door_pairs = num_key_door_pairs
+        self.success_reward = success_reward if success_reward is not None else SUCCESS_REWARD
         self.reward_fn: RewardFn = reward_fn if reward_fn is not None else _default_reward_fn
         self.render_mode = render_mode
 

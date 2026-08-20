@@ -94,6 +94,12 @@ def main():
     parser.add_argument("--rounds", type=int, default=10, help="Number of training rounds.")
     parser.add_argument("--round-delay", type=float, default=2.0, help="Inter-round synchronization delay in seconds (default: 2.0s).")
     parser.add_argument("--mode", choices=["tcp", "sim"], default="tcp", help="Transport mode: tcp for distributed or sim for in-process.")
+    parser.add_argument("--experiment-id", type=str, default="default", help="Ablation experiment ID (e.g. exp_a, exp_b, exp_c, exp_d, exp_e, exp_f).")
+    parser.add_argument("--sequence-length", type=int, default=50, help="GRU replay sequence length.")
+    parser.add_argument("--target-update-mode", choices=["soft", "hard"], default="soft", help="Target update mode: soft (Polyak) or hard.")
+    parser.add_argument("--tau", type=float, default=0.015, help="Polyak update rate tau.")
+    parser.add_argument("--max-grad-norm", type=float, default=10.0, help="Gradient norm clipping max norm (<=0 to disable).")
+    parser.add_argument("--success-reward", type=float, default=25.0, help="Team success reward bonus.")
     parser.add_argument("--render", action="store_true", help="Enable live ASCII terminal rendering of maze and agent steps.")
     parser.add_argument("--gui", "--matplotlib", dest="gui", action="store_true", help="Enable live Matplotlib graphical GUI rendering window.")
     args = parser.parse_args()
@@ -123,7 +129,19 @@ def main():
         for nbr in physical_graph.neighbors(args.node_id):
             transport.register(nbr)
 
-    services = build_services(config, transport)
+    use_soft_target = (args.target_update_mode == "soft")
+    max_grad_norm = args.max_grad_norm if args.max_grad_norm > 0 else 0.0
+
+    services = build_services(
+        config=config,
+        transport=transport,
+        experiment_id=args.experiment_id,
+        sequence_length=args.sequence_length,
+        use_soft_target=use_soft_target,
+        tau=args.tau,
+        max_grad_norm=max_grad_norm,
+        success_reward=args.success_reward,
+    )
     scheduler = NodeScheduler(services, transport)
     live_view = LiveTerminalView(node_id=args.node_id, mode=args.mode, enabled=args.render)
     gui_view = MatplotlibLiveView(node_id=args.node_id, enabled=args.gui)

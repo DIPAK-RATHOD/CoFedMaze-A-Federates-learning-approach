@@ -47,7 +47,17 @@ class NodeServices:
     step_logger: StepLogger
 
 
-def build_services(config: NodeConfig, transport: Transport) -> NodeServices:
+def build_services(
+    config: NodeConfig,
+    transport: Transport,
+    experiment_id: str = "default",
+    sequence_length: int = 50,
+    use_soft_target: bool = True,
+    tau: float = 0.015,
+    max_grad_norm: float = 10.0,
+    success_reward: float = 25.0,
+    target_update_interval_episodes: int = 10,
+) -> NodeServices:
     """Instantiate and wire up all per-node services."""
     env = CoFedMazeParallelEnv(
         rows=config.maze_rows,
@@ -57,16 +67,27 @@ def build_services(config: NodeConfig, transport: Transport) -> NodeServices:
         num_checkpoints=config.num_checkpoints,
         num_obstacles=config.num_obstacles,
         num_key_door_pairs=config.num_key_door_pairs,
+        success_reward=success_reward,
     )
 
-    log_dir = f"state/{config.node_id.lower()}/logs"
+    if experiment_id == "default":
+        log_dir = f"state/{config.node_id.lower()}/logs"
+        checkpoint_dir = f"state/{config.node_id.lower()}/checkpoints"
+    else:
+        log_dir = f"state/{experiment_id}/{config.node_id.lower()}/logs"
+        checkpoint_dir = f"state/{experiment_id}/{config.node_id.lower()}/checkpoints"
+
     step_logger = StepLogger(log_dir=log_dir, node_id=config.node_id)
-    checkpoint_dir = f"state/{config.node_id.lower()}/checkpoints"
 
     trainer = LocalTrainer(
         env=env,
         in_channels=NUM_CHANNELS,
         num_actions=NUM_ACTIONS,
+        sequence_length=sequence_length,
+        use_soft_target=use_soft_target,
+        tau=tau,
+        max_grad_norm=max_grad_norm,
+        target_update_interval_episodes=target_update_interval_episodes,
         step_logger=step_logger,
         checkpoint_dir=checkpoint_dir,
         epsilon_decay_episodes=200,

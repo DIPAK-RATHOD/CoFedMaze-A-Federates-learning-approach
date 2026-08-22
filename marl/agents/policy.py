@@ -53,40 +53,49 @@ class Policy:
         self.model = model
         self.agent_index = agent_index
         self.selector = selector
+        self.last_action: Optional[int] = None
 
-    def act(
-        self, observation: torch.Tensor, hidden: torch.Tensor
-    ) -> Tuple[int, torch.Tensor, torch.Tensor]:
-        """
-        Choose an action using the wrapped exploration strategy.
-
-        Args:
-            observation: (1, in_channels, window, window) — single-step,
-                single-environment observation for this agent.
-            hidden: (1, hidden_dim) previous hidden state for this
-                agent.
-
-        Returns:
-            (action, q_values, new_hidden):
-                action: chosen action index (int).
-                q_values: (num_actions,) full Q-vector, batch dim
-                    squeezed off for the caller's convenience.
-                new_hidden: (1, hidden_dim) updated hidden state to pass
-                    into the next call.
-        """
     def _apply_action_mask(self, observation: torch.Tensor, q_values: torch.Tensor) -> torch.Tensor:
-        """Mask out movement actions leading into solid walls and unneeded INTERACT actions."""
-        if observation.dim() == 4 and observation.shape[1] >= 4:
+        """Topological Action Availability Masking (TAAM): mask walls, occupied partner cells, unneeded INTERACT, and 2-cell backtracking oscillations."""
+        if observation.dim() == 4 and observation.shape[1] >= 5:
             half_w = observation.shape[2] // 2
             half_h = observation.shape[3] // 2
             masked_q = q_values.clone()
+
+            # 1. Mask out movements into solid walls
             for move_action in range(4):
                 if observation[0, move_action, half_w, half_h] < 0.5:
                     masked_q[move_action] = -1e9
-            
-            # Mask INTERACT (4) if no adjacent locked door is present in local observation window
-            if observation.shape[1] > 7 and observation[0, 7].sum() < 0.5:
+
+            # 2. Mask out movements into adjacent cells occupied by partner agent (CONTAINS_OTHER_AGENT = channel 4)
+            adj_offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            for move_action, (dr, dc) in enumerate(adj_offsets):
+                nr, nc = half_w + dr, half_h + dc
+                if 0 <= nr < observation.shape[2] and 0 <= nc < observation.shape[3]:
+                    if observation[0, 4, nr, nc] > 0.5:
+                        masked_q[move_action] = -1e9
+
+            # 3. Anti-oscillation: penalize immediate 2-cell backtracking if alternative valid moves exist
+            opposite_map = {0: 1, 1: 0, 2: 3, 3: 2}
+            if self.last_action is not None and self.last_action in opposite_map:
+                backtrack_action = opposite_map[self.last_action]
+                # Count non-backtracking valid movement options
+                valid_alternatives = sum(
+                    1 for a in range(4)
+                    if a != backtrack_action and masked_q[a] > -1e8
+                )
+                if valid_alternatives > 0:
+                    masked_q[backtrack_action] -= 2.0  # Apply anti-backtrack bias
+
+            # 4. Mask INTERACT (4) if no exit or door interactable is present
+            if observation.shape[1] > 7 and observation[0, 7].sum() < 0.5 and observation[0, 5, half_w, half_h] < 0.5:
                 masked_q[4] = -1e9
+
+            # Fallback: if all actions are masked out, unmask valid non-wall actions
+            if (masked_q > -1e8).sum() == 0:
+                for move_action in range(4):
+                    if observation[0, move_action, half_w, half_h] >= 0.5:
+                        masked_q[move_action] = q_values[move_action]
 
             return masked_q
         return q_values
@@ -94,9 +103,7 @@ class Policy:
     def act(
         self, observation: torch.Tensor, hidden: torch.Tensor
     ) -> Tuple[int, torch.Tensor, torch.Tensor]:
-        """
-        Choose an action using the wrapped exploration strategy with wall action masking.
-        """
+        """Choose an action using the wrapped exploration strategy with TAAM."""
         with torch.no_grad():
             q_values_batched, new_hidden = self.model.forward_agent(
                 observation, hidden, self.agent_index
@@ -104,14 +111,13 @@ class Policy:
         q_values = q_values_batched.squeeze(0)
         masked_q = self._apply_action_mask(observation, q_values)
         action = self.selector.select(masked_q)
+        self.last_action = action
         return action, q_values, new_hidden
 
     def act_greedy(
         self, observation: torch.Tensor, hidden: torch.Tensor
     ) -> Tuple[int, torch.Tensor, torch.Tensor]:
-        """
-        Choose the greedy (argmax) action with wall action masking.
-        """
+        """Choose the greedy (argmax) action with TAAM."""
         with torch.no_grad():
             q_values_batched, new_hidden = self.model.forward_agent(
                 observation, hidden, self.agent_index
@@ -119,6 +125,7 @@ class Policy:
         q_values = q_values_batched.squeeze(0)
         masked_q = self._apply_action_mask(observation, q_values)
         action = int(torch.argmax(masked_q).item())
+        self.last_action = action
         return action, q_values, new_hidden
 
 

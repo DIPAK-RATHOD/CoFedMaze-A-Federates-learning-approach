@@ -540,8 +540,8 @@ class LocalTrainer:
             # Periodic evaluation with deterministic epsilon = 0 policy
             if eval_interval > 0 and self.episode_count % eval_interval == 0:
                 eval_metrics = self.evaluate(num_episodes=3)
-                summary["eval_success_rate"] = eval_metrics["success_rate"]
-                summary["eval_reward"] = eval_metrics["evaluation_reward"]
+                summary["eval_success_rate"] = eval_metrics.get("validation_success_rate", 0.0)
+                summary["eval_reward"] = eval_metrics.get("average_reward", 0.0)
 
             if verbose:
                 goal_str = "SOLVED" if trajectory.goal_reached else "TIMEOUT"

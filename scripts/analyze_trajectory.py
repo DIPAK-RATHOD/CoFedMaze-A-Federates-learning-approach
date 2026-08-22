@@ -77,18 +77,19 @@ def analyze_seed_trajectory(
 
         for agent_id in env.agents:
             obs_tensor = torch.from_numpy(obs[agent_id]).unsqueeze(0)
-            agent_idx = 0 if agent_id == AGENT_A else 1
-
-            # Query Q-values from policy model
-            with torch.no_grad():
-                q_vals, _ = model.forward_agent(obs_tensor, agents[agent_id].hidden_state, agent_idx)
-                q_values_dict[agent_id] = q_vals.squeeze(0).cpu().numpy().tolist()
 
             if epsilon == 0.0:
-                action, _ = agents[agent_id].act_greedy(obs_tensor)
+                action, info = agents[agent_id].act_greedy(obs_tensor)
             else:
-                action, _ = agents[agent_id].act(obs_tensor)
+                action, info = agents[agent_id].act(obs_tensor)
+
             actions[agent_id] = action
+            q_vals = info.get("q_values")
+            if q_vals is not None:
+                if isinstance(q_vals, torch.Tensor):
+                    q_values_dict[agent_id] = q_vals.squeeze(0).cpu().numpy().tolist()
+                else:
+                    q_values_dict[agent_id] = list(q_vals)
 
         next_obs, rewards, terminations, truncations, infos = env.step(actions)
         step_reward = rewards[AGENT_A]
